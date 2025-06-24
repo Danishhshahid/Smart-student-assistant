@@ -9,6 +9,7 @@ from agents.run import RunConfig
 # Load environment variables
 load_dotenv()
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+# print("api key loaded", openrouter_api_key)
 
 if not openrouter_api_key:
     raise ValueError("OPENROUTER_API_KEY not found in .env file")
@@ -18,7 +19,10 @@ async def start():
     # Setup client and model
     client = AsyncOpenAI(
         api_key=openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1"
+        base_url="https://openrouter.ai/api/v1",
+        default_headers={
+        "Authorization": f"Bearer {openrouter_api_key}"
+    }
     )
 
     model = OpenAIChatCompletionsModel(
@@ -89,23 +93,16 @@ async def main(message: cl.Message):
     history.append({"role": "user", "content": message.content})
 
     try:
-        result = Runner.run_sync(
+        result = Runner.run_streamed(
             starting_agent=agent,
             input=history,
             run_config=config
         )
-
-        response = result.final_output
-
-        # Typewriter stream effect
-        streamed_msg = cl.Message(content="")
-        await streamed_msg.send()
-
-        for char in response:
-            streamed_msg.content += char
-            await streamed_msg.update()
-            await asyncio.sleep(0.015)
-
+      
+        async for event in result.stream_events():
+            if event.type == "raw_response_event" and hasattr(event.data, 'delta'):
+                token = event.data.delta
+                await thinking_msg.stream_token(token)  
         cl.user_session.set("chat_history", result.to_input_list())
 
     except Exception as e:
